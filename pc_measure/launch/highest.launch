@@ -1,0 +1,7 @@
+<launch>
+
+    <node pkg="pc_measure" type="highest_pc_node" name="highest_pc_node" output="screen">
+
+    </node>
+
+</launch>

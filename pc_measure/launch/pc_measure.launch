@@ -1,0 +1,8 @@
+<launch>
+
+    <node pkg="pc_measure" type="pc_measure_node" name="pc_measure" output="screen">
+
+	  <rosparam file="$(find pc_measure)/config/params.yaml"/>
+    </node>
+
+</launch>
