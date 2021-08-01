@@ -1,11 +1,13 @@
 
+#########################  点云筛选  #######################################
 use_img_color : false
 
 cam_topic : /usb_cam/image_raw
 
-#lidar_topic : /livox/lidar
-lidar_topic : /velodyne_cloud_registered
+lidar_topic : /livox/lidar
+#lidar_topic : /velodyne_cloud_registered
 
+#没有imu里程计数据时为false
 use_tf_inform : false
 
 #相机与雷达标定结果
@@ -20,13 +22,28 @@ camera_internal_matrix: [  879.561224,        0.0,      1000.720510,
                                0.0,        0.0,          1.0 ]
 
 
-#tc_l: [     -0.00468494,   -0.999917,    -0.012006,   0.0322699,
-#            -0.00147814,    0.012013,    -0.999927,   0.0363099,
-#             0.999988,   -0.00466685,   -0.0015343,  -0.0154693,
-#                  0.0,           0.0,         0.0,          1.0 ]
+#################################  最高点检测  ##############################
 
-#camera_internal_matrix: [  1364.45,        0.0,      958.327,
-#                               0.0,    1366.46,      535.074,
-#                               0.0,        0.0,          1.0 ]
+check_cloud : /livox/lidar
 
+# 如果使用以下参数，表示使用筛选后的点云进行最高点检测
+#check_cloud : /roi_point_cloud
+
+# 轨条最高点至少离“地面”的距离
+min_distance : 0.5
+
+# 轨条最高点至少离雷达的距离，用于过滤噪声
+min_lidar_distance : 0.05
+
+# 发布一次数据时融合的帧数
+frame_tick : 10
+
+# 统计滤波邻近点数
+filter_neighbor_points : 10
+
+# 统计滤波离群点阈值
+filter_threshold : 2.0
+
+# 开启测试模式，会输出便于调试的中间结果，但是会额外占用性能
+debug_mode : false
 

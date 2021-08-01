@@ -19,7 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <vector>
+#include <queue>
 
 #define PI 3.141592653589
 using namespace std;
@@ -36,10 +36,9 @@ double min_distance , min_lidar_distance ;
 int frame_tick;
 int neighbor_points;
 double threshold;
-bool debug_mode;
 
-vector<double> tem_x(10);
-vector<double> tem_y(10);
+queue<double> distances;
+queue<pcl::PointXYZ> high_points;
 
 
 void initParams(ros::NodeHandle& n)
@@ -51,8 +50,6 @@ void initParams(ros::NodeHandle& n)
     if(!n.getParam("/highest_pc_node/frame_tick", frame_tick)){ ROS_ERROR("Failed to get parameter from server."); }
     if(!n.getParam("/highest_pc_node/filter_neighbor_points", neighbor_points)){ ROS_ERROR("Failed to get parameter from server."); }
     if(!n.getParam("/highest_pc_node/filter_threshold", threshold)){ ROS_ERROR("Failed to get parameter from server."); }
-    if(!n.getParam("/highest_pc_node/filter_threshold", threshold)){ ROS_ERROR("Failed to get parameter from server."); }
-    if(!n.getParam("/highest_pc_node/debug_mode", debug_mode)){ ROS_ERROR("Failed to get parameter from server."); }
 
     cout << "load params successfully as: \n";
     cout << "check_cloud : " << lidar_topic << "\n\n min_distance : " << min_distance << "\n\n min_lidar_distance : " << min_lidar_distance << endl;
@@ -71,6 +68,7 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pc_now) {
     pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr pc_raw (new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr pc_raw_pre (new pcl::PointCloud<pcl::PointXYZ>);
     pcl::fromROSMsg( *pc_now, *pc_raw );
 
     /*
@@ -90,13 +88,11 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pc_now) {
     seg.segment (*inliers, *coefficients);
 
     // 把平面内点提取到一个新的点云中
-    if(debug_mode) {
-        pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_plane (new pcl::PointCloud<pcl::PointXYZ>);
-        pcl::ExtractIndices<pcl::PointXYZ> ex ;
-        ex.setInputCloud(pc_raw);
-        ex.setIndices(inliers);
-        ex.filter(*cloud_plane); 
-    }
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_plane (new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::ExtractIndices<pcl::PointXYZ> ex ;
+    ex.setInputCloud(pc_raw);
+    ex.setIndices(inliers);
+    ex.filter(*cloud_plane); 
 
     //统计滤波
     pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;   //创建滤波器对象
@@ -124,81 +120,59 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& pc_now) {
     }
 
 
-    // transform the cloud
+
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_rotated (new pcl::PointCloud<pcl::PointXYZ>);
     Eigen::Matrix4f transform = Eigen::Matrix4f::Identity();
     Eigen::AngleAxisf Rotation_vector(theta , Eigen::Vector3f(0,1,0));
     Eigen::Matrix3f rotation_matrix = Rotation_vector.matrix();
     transform.block<3,3>(0,0) = rotation_matrix;
+    pcl::transformPointCloud(*cloud_filtered , *cloud_rotated , transform);
 
-    if (debug_mode) {
-        pcl::transformPointCloud(*cloud_filtered , *cloud_rotated , transform);
-        sensor_msgs::PointCloud2 output_pc_rotated, output_pc_filtered;
-        pcl::toROSMsg(*cloud_rotated , output_pc_rotated);
-        pcl::toROSMsg(*cloud_filtered , output_pc_filtered);
-        output_pc_rotated.header.frame_id = "livox_frame";
-        output_pc_filtered.header.frame_id = "livox_frame";
-        filtered_pc_pub.publish(output_pc_filtered);
-        rotated_pc_pub.publish(output_pc_rotated);
-    }
+    sensor_msgs::PointCloud2 output_pc_rotated, output_pc_filtered;
+    pcl::toROSMsg(*cloud_rotated , output_pc_rotated);
+    pcl::toROSMsg(*cloud_filtered , output_pc_filtered);
+    output_pc_rotated.header.frame_id = "livox_frame";
+    output_pc_filtered.header.frame_id = "livox_frame";
+    filtered_pc_pub.publish(output_pc_filtered);
+    rotated_pc_pub.publish(output_pc_rotated);
 
+    if(maxdistance < min_distance) {return ;}
 
-
-    if(fabs(maxdistance) < min_distance) {return ;}
-
-    if( maxdistance > max_distance_multi - 0.2 || total_frame > frame_tick){
-        total_frame = 0;
+    if(max_distance_multi < maxdistance){
         max_distance_multi = maxdistance;
-        pcl::PointXYZ last_highest_point = highest_point;
         highest_point = cloud_filtered -> points[index];
-
-        //过滤钢轨差异
-        if (fabs(last_highest_point.x - highest_point.x) < 0.3 && fabs(last_highest_point.y - highest_point.y) < 0.3) { 
-
-            tem_x.push_back(highest_point.x);
-            tem_y.push_back(highest_point.y);
-            double sum_x = accumulate(begin(tem_x), end(tem_x), 0.0);  
-            double mean_x =  sum_x / tem_x.size(); //均值
-            double sum_y = accumulate(begin(tem_y), end(tem_y), 0.0);  
-            double mean_y =  sum_y / tem_y.size(); //均值
-            highest_point.x = mean_x;
-            highest_point.y = mean_y;
-        }
-        else{
-            tem_x.clear();
-            tem_y.clear();
-        }
     }
+    total_frame ++;
 
-    sensor_msgs::PointCloud2 output_pc ;
-    pcl::PointCloud<pcl::PointXYZ>::Ptr output_cloud (new pcl::PointCloud<pcl::PointXYZ>);
-    output_cloud -> push_back(highest_point);
-    total_frame++ ;
-    //drone coordinate
+    if (total_frame >= frame_tick) {
+
         
-    Eigen::Vector4f hp_coor;
-    hp_coor << highest_point.x , highest_point.y , highest_point.z , 1;
-    Eigen::Vector4f hp_coor_d = transform * hp_coor;
-    pcl::PointXYZ p_drone;
-    p_drone.x = hp_coor_d[0];
-    p_drone.y = hp_coor_d[1];
-    p_drone.z = hp_coor_d[2];
-    output_cloud -> push_back(p_drone);
+        sensor_msgs::PointCloud2 output_pc ;
+        pcl::PointCloud<pcl::PointXYZ>::Ptr output_cloud (new pcl::PointCloud<pcl::PointXYZ>);
+        output_cloud -> push_back(highest_point);
 
-    pcl::toROSMsg(*output_cloud , output_pc);
-    output_pc.header.frame_id = "livox_frame";
 
-    height_pc_pub.publish(output_pc);
+        max_distance_multi = 0;
+        total_frame = 0;
 
-    geometry_msgs::Twist t;
-    t.linear.x = -p_drone.x;
-    t.linear.y = -p_drone.y;
-    t.linear.z = -p_drone.z;
+        //drone coordinate
+        
+        Eigen::Vector4f hp_coor;
+        hp_coor << highest_point.x , highest_point.y , highest_point.z , 1;
+        Eigen::Vector4f hp_coor_d = transform * hp_coor;
+        pcl::PointXYZ p_drone;
+        p_drone.x = hp_coor_d[0];
+        p_drone.y = hp_coor_d[1];
+        p_drone.z = hp_coor_d[2];
+        output_cloud -> push_back(p_drone);
 
-    target_pub.publish(t);
+        pcl::toROSMsg(*output_cloud , output_pc);
+        output_pc.header.frame_id = "livox_frame";
 
-    cout<<"\npublished!  dx="<< -p_drone.x <<" | dy="<< -p_drone.y <<" | dz=" << -p_drone.z <<endl;
+        height_pc_pub.publish(output_pc);
 
+        cout<<"\npublished!  dx="<<p_drone.x <<" | dy="<<p_drone.y <<endl;
+    }
 
 
 
